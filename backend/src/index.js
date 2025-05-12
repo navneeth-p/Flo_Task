@@ -1,20 +1,15 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const rclnodejs = require('rclnodejs');
-const mongoose = require('mongoose');
-const Path = require('./models/Path');
-const Station = require('./models/Station');
-const cors = require('cors');
-const path = require('path');
-const bodyParser = require('body-parser');
-const fs = require('fs');
+import express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import http from 'http';
+import { Server } from 'socket.io';
+import rclnodejs from 'rclnodejs';
+import path from 'path';
+import fs from 'fs';
 
 
-// import pathRoutes from './routes/pathRoutes.js';
-// import stationRoutes from './routes/stationRoutes.js';
- const pathRoutes = require('./routes/pathRoutes');
-  const stationRoutes = require('./routes/stationRoutes');
+import pathRoutes from './routes/pathRoutes.js';
+import stationRoutes from './routes/stationRoutes.js';
 
 
 // MongoDB connection
@@ -43,7 +38,8 @@ const io = new Server(server, {
 });
 
 // Routes
-app.use('/api', pathRoutes);
+app.use('/path', pathRoutes);
+app.use('/station', stationRoutes);
 
 let node;
 let turtlePoseSub;
@@ -144,9 +140,13 @@ function moveToPoint(point) {
   const angle = Math.atan2(dy, dx);
   const angleDifference = normalizeAngle(angle - currentMission.currentPose.theta);
 
-  if (distance > 0.1) {
+  // If the angle difference is large, rotate in place
+  if (Math.abs(angleDifference) > 0.2) {
+    twist.linear.x = 0;
+    twist.angular.z = Math.sign(angleDifference) * Math.min(Math.abs(angleDifference), 1.0);
+  } else if (distance > 0.1) {
     twist.linear.x = Math.min(1.0, distance);
-    twist.angular.z = Math.sign(angleDifference) * Math.min(Math.abs(angleDifference), 1.0); // Limiting angular velocity
+    twist.angular.z = Math.sign(angleDifference) * Math.min(Math.abs(angleDifference), 1.0);
   }
 
   turtleVelPub.publish(twist);
@@ -164,6 +164,16 @@ function stopTurtle() {
     angular: { x: 0, y: 0, z: 0 }
   });
 }
+
+// Place this at the top level, not inside io.on('connection')
+process.on('SIGINT', async () => {
+  console.log('Shutting down ROS 2 node...');
+  if (node) {
+    await node.destroy();
+  }
+  rclnodejs.shutdown();
+  process.exit(0);
+});
 
 io.on('connection', (socket) => {
   console.log('Client connected');
@@ -246,16 +256,6 @@ io.on('connection', (socket) => {
     currentMission = null;
     stopTurtle();
   });
-
-  process.on('SIGINT', async () => {
-  console.log('Shutting down ROS 2 node...');
-  if (node) {
-    await node.destroy();
-  }
-  rclnodejs.shutdown();
-  process.exit(0);
-});
-
 });
 
 // Initialize ROS 2

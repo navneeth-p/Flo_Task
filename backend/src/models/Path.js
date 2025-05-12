@@ -9,6 +9,13 @@ const pathSchema = new mongoose.Schema({
       theta: Number,
       timestamp: { type: Date, default: Date.now }
     }
+  ],
+  stations: [
+    {
+      x: Number,
+      y: Number,
+      z: Number
+    }
   ]
 }, { timestamps: true });
 

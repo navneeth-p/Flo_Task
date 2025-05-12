@@ -1,17 +1,13 @@
-const express = require('express');
-const Path = require('../models/Path.js');
-const Station = require('../models/Station.js');
-import mongoose from 'mongoose';
-import rclnodejs from 'rclnodejs';
+import express from 'express';
+import Path from '../models/Path.js';
 
 const router = express.Router();
-
 router.use(express.json());
 
 router.post('/savePath', async (req, res) => {
   try {
-    const { name, points } = req.body;
-    const newPath = new Path({ name, points });
+    const { name, points, stations } = req.body;
+    const newPath = new Path({ name, points, stations });
     await newPath.save();
     res.status(201).json({ message: 'Path saved successfully' });
   } catch (err) {
@@ -28,4 +24,4 @@ router.get('/paths', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

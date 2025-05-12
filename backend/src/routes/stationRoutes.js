@@ -1,7 +1,8 @@
-const express = require('express');
-const Station = require('../models/Station.js');
+import express from 'express';
+import Station from '../models/Station.js';
 
 const router = express.Router();
+router.use(express.json());
 
 router.post('/saveStation', async (req, res) => {
   try {
@@ -23,5 +24,5 @@ router.get('/stations', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
 

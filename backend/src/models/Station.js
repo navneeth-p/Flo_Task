@@ -1,4 +1,6 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
+import express from 'express';
+import e from 'express';
 
 const StationSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -6,4 +8,4 @@ const StationSchema = new mongoose.Schema({
   y: { type: Number, required: true }
 }, { timestamps: true });
 
-module.exports = mongoose.model('Station', StationSchema);
+export default mongoose.model('Station', StationSchema);
