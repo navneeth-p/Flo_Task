@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Line } from '@react-three/drei';
+import { Line, Tube } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '../store';
 
@@ -29,18 +29,28 @@ const NeonGrid = ({ size = 20, divisions = 40, color = '#00bfff' }) => {
   );
 };
 
-// Turtle component
+// Turtle component (box)
 const Turtle = ({ position, rotation }: { position: [number, number, number]; rotation: number }) => {
   const meshRef = useRef<THREE.Mesh>(null);
+  const prevRotation = useRef(rotation);
+
   useFrame(() => {
     if (meshRef.current) {
       meshRef.current.position.set(...position);
-      meshRef.current.rotation.set(-Math.PI / 2, 0, rotation);
+      // Smoothly interpolate rotation
+      const targetRotation = rotation;
+      const currentRotation = prevRotation.current;
+      const delta = (targetRotation - currentRotation) % (2 * Math.PI);
+      const adjustedDelta = delta > Math.PI ? delta - 2 * Math.PI : delta < -Math.PI ? delta + 2 * Math.PI : delta;
+      const newRotation = currentRotation + adjustedDelta * 0.1; // Adjust speed with 0.1
+      meshRef.current.rotation.set(-Math.PI / 2, 0, newRotation);
+      prevRotation.current = newRotation;
     }
   });
+
   return (
     <mesh ref={meshRef}>
-      <boxGeometry args={[0.7, 0.7, 0.1]} />
+      <boxGeometry args={[0.5, 0.5, 0.5]} />
       <meshStandardMaterial color="#00ff99" />
     </mesh>
   );
@@ -50,6 +60,7 @@ const Turtle = ({ position, rotation }: { position: [number, number, number]; ro
 const StationMarker = ({
   position,
   type,
+  id,
   isSelected,
   isHovered,
   onClick,
@@ -57,15 +68,22 @@ const StationMarker = ({
   onPointerOut,
 }: {
   position: [number, number, number];
-  type?: 'start' | 'end' | 'station';
+  type: 'start' | 'end' | 'station';
+  id: string;
   isSelected: boolean;
   isHovered: boolean;
   onClick: () => void;
   onPointerOver?: () => void;
   onPointerOut?: () => void;
 }) => {
-  const scale = type === 'start' || type === 'end' ? 1.2 : isSelected ? 1.1 : isHovered ? 1 : 0.8;
-  const color = type === 'start' ? '#4ade80' : type === 'end' ? '#facc15' : isSelected ? '#fff' : '#ff69f6';
+  // Debug: Log when rendering with selection state
+  useEffect(() => {
+    console.log(`StationMarker ${id}: isSelected=${isSelected}, isHovered=${isHovered}`);
+  }, [id, isSelected, isHovered]);
+
+  const scale = type === 'start' || type === 'end' ? 1.1 : isSelected ? 1.05 : isHovered ? 1 : 0.7;
+  // Prioritize isSelected for color
+  const color = isSelected ? '#00f' : type === 'start' ? '#4ade80' : type === 'end' ? '#facc15' : '#ff69f6';
   const emissive = color;
   const ringColor = type === 'start' || type === 'end' ? color : '#fff';
 
@@ -73,11 +91,14 @@ const StationMarker = ({
     <group position={position}>
       <mesh
         scale={scale}
-        onClick={onClick}
+        onClick={() => {
+          console.log(`Clicked station: ${id}`);
+          onClick();
+        }}
         onPointerOver={onPointerOver}
         onPointerOut={onPointerOut}
       >
-        <sphereGeometry args={[0.35, 32, 32]} />
+        <sphereGeometry args={[0.25, 32, 32]} />
         <meshStandardMaterial
           color={color}
           emissive={emissive}
@@ -87,25 +108,39 @@ const StationMarker = ({
         />
       </mesh>
       <mesh scale={scale * 1.25}>
-        <torusGeometry args={[0.35, 0.06, 16, 64]} />
+        <torusGeometry args={[0.25, 0.04, 16, 64]} />
         <meshBasicMaterial color={ringColor} transparent opacity={0.5} />
       </mesh>
     </group>
   );
 };
 
-// Path line component
-const PathLine = ({ points, color = '#ff69f6' }: { points: [number, number, number][]; color?: string }) => (
-  <Line points={points} color={color} lineWidth={6} position={[0, 0, 0.05]} />
-);
+// Path tube component
+const PathTube = ({ points, color = '#ff69f6' }: { points: [number, number, number][]; color?: string }) => {
+  const curve = useMemo(() => {
+    // Filter out invalid points (NaN, undefined) and ensure at least 2 points
+    const validPoints = points.filter(([x, y, z]) => !isNaN(x) && !isNaN(y) && !isNaN(z));
+    if (validPoints.length < 2) return null;
+    const vectors = validPoints.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+    return new THREE.CatmullRomCurve3(vectors);
+  }, [points]);
+
+  if (!curve) return null;
+
+  return (
+    <Tube args={[curve, 64, 0.1, 8, false]} position={[0, 0, 0.05]}>
+      <meshStandardMaterial color={color} />
+    </Tube>
+  );
+};
 
 // Toast component with fade animation
 const Toast: React.FC<{ message: string }> = ({ message }) => {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    setIsVisible(true); // Fade in when message is set
-    return () => setIsVisible(false); // Fade out when unmounting
+    setIsVisible(true);
+    return () => setIsVisible(false);
   }, [message]);
 
   return (
@@ -250,6 +285,7 @@ const NamePathModal: React.FC<{
   );
 };
 
+// Scene component
 const Scene: React.FC<SceneProps> = () => {
   const {
     turtlePosition,
@@ -257,26 +293,34 @@ const Scene: React.FC<SceneProps> = () => {
     paths,
     currentPath,
     isMapping,
+    startingStation,
+    stationsOnPath,
     selectedPathId,
     selectedStation,
     isMissionRunning,
     missionPath,
     missionTargetIdx,
-    stationsOnPath,
     toast,
     showNameModal,
     pendingDefaultName,
-    setSelectedStation,
+    setStartingStation,
     startMapping,
     stopMapping,
-    addStationOnPath,
     saveNamedPath,
     cancelNamedPath,
+    setSelectedPathId,
+    setSelectedStation,
     startMission,
+    stopMission,
     error,
     loading,
   } = useStore();
-  const [hoveredStation, setHoveredStation] = useState<'start' | 'end' | null>(null);
+  const [hoveredStation, setHoveredStation] = useState<string | null>(null);
+
+  // Debug: Log selectedStation changes
+  useEffect(() => {
+    console.log('Selected station updated:', selectedStation);
+  }, [selectedStation]);
 
   // Update mission target index
   useEffect(() => {
@@ -304,70 +348,75 @@ const Scene: React.FC<SceneProps> = () => {
     const path = paths.find((p) => p.id === selectedPathId);
     if (!path || !path.stations) return [];
 
-    return path.stations.map((pos, i) => {
-      const type: 'start' | 'end' | 'station' =
-        i === 0 ? 'start' : i === path.stations!.length - 1 ? 'end' : 'station';
-      const isSelected =
-        (type === 'start' && selectedStation === 'start') ||
-        (type === 'end' && selectedStation === 'end');
-      const isClickable = type === 'start' || type === 'end';
+    return path.stations.map(({ position, id }, i) => {
+      if (i !== 0 && i !== path.stations!.length - 1) return null; // Skip intermediate stations for rendering
+      const type: 'start' | 'end' = i === 0 ? 'start' : 'end';
+      const isSelected = selectedStation === id;
+      const isClickable = true;
       return (
         <StationMarker
-          key={`saved-station-${i}`}
-          position={pos}
+          key={`saved-station-${id}`}
+          position={position}
           type={type}
+          id={id}
           isSelected={isSelected}
-          isHovered={isClickable && hoveredStation === type}
-          onClick={() => isClickable && setSelectedStation(type)}
-          onPointerOver={() => isClickable && setHoveredStation(type)}
+          isHovered={isClickable && hoveredStation === id}
+          onClick={() => {
+            console.log(`Selecting saved station: ${id}`);
+            setSelectedStation(id);
+          }}
+          onPointerOver={() => isClickable && setHoveredStation(id)}
           onPointerOut={() => isClickable && setHoveredStation(null)}
         />
       );
-    });
+    }).filter(Boolean);
   }, [paths, selectedPathId, selectedStation, hoveredStation, setSelectedStation]);
 
   // Station markers during mapping
   const mappingStations = useMemo(() => {
-    if (!isMapping || !currentPath.length) return [];
-    const stations = [];
-    // Start station at first point
-    stations.push(
-      <StationMarker
-        key="mapping-start"
-        position={currentPath[0]}
-        type="start"
-        isSelected={false}
-        isHovered={false}
-        onClick={() => {}}
-      />
-    );
-    // Intermediate stations
-    stationsOnPath.forEach((pos, i) => {
-      if (i === 0 || i === stationsOnPath.length - 1) return; // Skip start/end
+    const stations: JSX.Element[] = [];
+    // Start station
+    if (startingStation) {
       stations.push(
         <StationMarker
-          key={`mapping-station-${i}`}
-          position={pos}
-          type="station"
-          isSelected={false}
-          isHovered={false}
-          onClick={() => {}}
+          key="mapping-start"
+          position={startingStation.position}
+          type="start"
+          id="start"
+          isSelected={selectedStation === 'start'}
+          isHovered={hoveredStation === 'start'}
+          onClick={() => {
+            console.log('Selecting mapping start station');
+            setSelectedStation('start');
+          }}
+          onPointerOver={() => setHoveredStation('start')}
+          onPointerOut={() => setHoveredStation(null)}
+        />
+      );
+    }
+    // Intermediate stations
+    stationsOnPath.forEach(({ position, id }, i) => {
+      if (i === 0) return; // Skip start station (already added)
+      if (id === 'end' && isMapping) return; // Skip end station during active mapping
+      stations.push(
+        <StationMarker
+          key={`mapping-station-${id}`}
+          position={position}
+          type={id === 'end' ? 'end' : 'station'}
+          id={id}
+          isSelected={selectedStation === id}
+          isHovered={hoveredStation === id}
+          onClick={() => {
+            console.log(`Selecting mapping station: ${id}`);
+            setSelectedStation(id);
+          }}
+          onPointerOver={() => setHoveredStation(id)}
+          onPointerOut={() => setHoveredStation(null)}
         />
       );
     });
-    // End station at current turtle position
-    stations.push(
-      <StationMarker
-        key="mapping-end"
-        position={turtlePosition}
-        type="end"
-        isSelected={false}
-        isHovered={false}
-        onClick={() => {}}
-      />
-    );
     return stations;
-  }, [isMapping, currentPath, stationsOnPath, turtlePosition]);
+  }, [isMapping, startingStation, stationsOnPath, selectedStation, hoveredStation, setSelectedStation]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', background: '#181a20' }}>
@@ -385,16 +434,16 @@ const Scene: React.FC<SceneProps> = () => {
         {/* Render selected path */}
         {paths.map((path) =>
           path.id === selectedPathId ? (
-            <PathLine key={path.id} points={path.points} color="#00ffcc" />
+            <PathTube key={path.id} points={path.points} color="#00ffcc" />
           ) : null
         )}
         {/* Render current path during mapping */}
-        {isMapping && currentPath.length > 1 && (
-          <PathLine points={currentPath} color="#00ffea" />
+        {isMapping && currentPath.length >= 2 && (
+          <PathTube points={currentPath} color="#00ffea" />
         )}
         {/* Render turtle */}
         <Turtle position={turtlePosition} rotation={turtleRotationDisplay} />
-        {/* Render stations during mapping */}
+        {/* Render stations during mapping or after stopping */}
         {mappingStations}
         {/* Render stations for selected path */}
         {selectedPathStations}
@@ -422,12 +471,36 @@ const Scene: React.FC<SceneProps> = () => {
         <div style={{ marginBottom: '1.25rem', fontWeight: 700, fontSize: 'clamp(1.1rem, 2.5vw, 1.25rem)', letterSpacing: '0.5px' }}>
           Path Control
         </div>
+        {/* Stations controls */}
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.625rem' }}>
+          <span style={{ fontWeight: 500 }}>Stations</span>
+          <button
+            onClick={setStartingStation}
+            disabled={isMissionRunning}
+            style={{
+              background: 'hsl(240, 80%, 60%)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '0.375rem 1.25rem',
+              fontWeight: 600,
+              opacity: isMissionRunning ? 0.5 : 1,
+              boxShadow: '0 1px 4px #0003',
+              transition: 'background 0.2s, transform 0.1s',
+              fontSize: 'clamp(0.85rem, 2vw, 0.9375rem)',
+            }}
+            onMouseEnter={(e) => !isMissionRunning && (e.currentTarget.style.background = 'hsl(240, 80%, 70%)')}
+            onMouseLeave={(e) => !isMissionRunning && (e.currentTarget.style.background = 'hsl(240, 80%, 60%)')}
+          >
+            Add Station
+          </button>
+        </div>
         {/* Mapping controls */}
         <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.625rem' }}>
           <span style={{ fontWeight: 500 }}>Mapping</span>
           <button
             onClick={startMapping}
-            disabled={isMapping}
+            disabled={isMapping || isMissionRunning}
             style={{
               background: 'hsl(240, 5%, 18%)',
               color: '#fff',
@@ -435,13 +508,13 @@ const Scene: React.FC<SceneProps> = () => {
               borderRadius: '8px',
               padding: '0.375rem 1.25rem',
               fontWeight: 600,
-              opacity: isMapping ? 0.5 : 1,
+              opacity: isMapping || isMissionRunning ? 0.5 : 1,
               boxShadow: '0 1px 4px #0003',
               transition: 'background 0.2s, transform 0.1s',
               fontSize: 'clamp(0.85rem, 2vw, 0.9375rem)',
             }}
-            onMouseEnter={(e) => !isMapping && (e.currentTarget.style.background = 'hsl(240, 5%, 24%)')}
-            onMouseLeave={(e) => !isMapping && (e.currentTarget.style.background = 'hsl(240, 5%, 18%)')}
+            onMouseEnter={(e) => !(isMapping || isMissionRunning) && (e.currentTarget.style.background = 'hsl(240, 5%, 24%)')}
+            onMouseLeave={(e) => !(isMapping || isMissionRunning) && (e.currentTarget.style.background = 'hsl(240, 5%, 18%)')}
           >
             Start
           </button>
@@ -465,11 +538,41 @@ const Scene: React.FC<SceneProps> = () => {
           >
             Stop
           </button>
-          {isMapping && (
+        </div>
+        {/* Mission controls */}
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.625rem' }}>
+          <span style={{ fontWeight: 500 }}>Mission</span>
+          <button
+            onClick={startMission}
+            disabled={!selectedPathId || isMissionRunning}
+            style={{
+              background: 'hsl(240, 5%, 18%)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '0.375rem 1.25rem',
+              fontWeight: 600,
+              opacity: !selectedPathId || isMissionRunning ? 0.5 : 1,
+              boxShadow: '0 1px 4px #0003',
+              transition: 'background 0.2s, transform 0.1s',
+              fontSize: 'clamp(0.85rem, 2vw, 0.9375rem)',
+            }}
+            onMouseEnter={(e) =>
+              !(!selectedPathId || isMissionRunning) &&
+              (e.currentTarget.style.background = 'hsl(240, 5%, 24%)')
+            }
+            onMouseLeave={(e) =>
+              !(!selectedPathId || isMissionRunning) &&
+              (e.currentTarget.style.background = 'hsl(240, 5%, 18%)')
+            }
+          >
+            Start
+          </button>
+          {isMissionRunning && (
             <button
-              onClick={addStationOnPath}
+              onClick={stopMission}
               style={{
-                background: 'hsl(240, 80%, 60%)',
+                background: 'hsl(0, 80%, 40%)',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '8px',
@@ -479,42 +582,12 @@ const Scene: React.FC<SceneProps> = () => {
                 transition: 'background 0.2s, transform 0.1s',
                 fontSize: 'clamp(0.85rem, 2vw, 0.9375rem)',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(240, 80%, 70%)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(240, 80%, 60%)')}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(0, 80%, 50%)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(0, 80%, 40%)')}
             >
-              Add Station
+              Stop
             </button>
           )}
-        </div>
-        {/* Mission controls */}
-        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.625rem' }}>
-          <span style={{ fontWeight: 500 }}>Mission</span>
-          <button
-            onClick={startMission}
-            disabled={!selectedPathId || isMissionRunning || !selectedStation}
-            style={{
-              background: 'hsl(240, 5%, 18%)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '0.375rem 1.25rem',
-              fontWeight: 600,
-              opacity: !selectedPathId || isMissionRunning || !selectedStation ? 0.5 : 1,
-              boxShadow: '0 1px 4px #0003',
-              transition: 'background 0.2s, transform 0.1s',
-              fontSize: 'clamp(0.85rem, 2vw, 0.9375rem)',
-            }}
-            onMouseEnter={(e) =>
-              !(!selectedPathId || isMissionRunning || !selectedStation) &&
-              (e.currentTarget.style.background = 'hsl(240, 5%, 24%)')
-            }
-            onMouseLeave={(e) =>
-              !(!selectedPathId || isMissionRunning || !selectedStation) &&
-              (e.currentTarget.style.background = 'hsl(240, 5%, 18%)')
-            }
-          >
-            Start
-          </button>
         </div>
         {/* Path selection */}
         <div style={{ marginBottom: '0.75rem' }}>
@@ -524,7 +597,7 @@ const Scene: React.FC<SceneProps> = () => {
             value={selectedPathId ?? ''}
             onChange={(e) => {
               const value = e.target.value;
-              useStore.setState({ selectedPathId: value === '' ? null : value });
+              setSelectedPathId(value === '' ? null : value);
             }}
             style={{
               padding: '0.5rem 0.75rem',
@@ -553,6 +626,9 @@ const Scene: React.FC<SceneProps> = () => {
         )}
         {loading && (
           <div style={{ marginTop: '0.625rem', color: '#fff' }}>Loading...</div>
+        )}
+        {isMissionRunning && (
+          <div style={{ color: '#00ffcc', marginTop: '0.625rem', fontWeight: 500 }}>Mission in progress...</div>
         )}
       </div>
       {toast && <Toast message={toast} />}
